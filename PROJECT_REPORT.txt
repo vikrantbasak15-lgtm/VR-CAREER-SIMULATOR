@@ -1,0 +1,1595 @@
+================================================================================
+  VR CAREER SIMULATOR — FULL PROJECT REPORT
+  Updated: August 22, 2026
+================================================================================
+
+TABLE OF CONTENTS
+  1. Project Overview
+  2. File Structure
+  3. Architecture & Module System
+  4. Detailed File Descriptions
+  5. What Was Built (Session 1: Restructuring)
+  6. What Was Built (Session 2: Visual Overhaul)
+  7. What Was Built (Session 3: Object Styling & Material Upgrade)
+  8. What Was Built (Session 4: Micro-Detailing & Geometry Polish)
+  9. What Was Built (Session 5: Masterpiece Upgrade)
+ 10. What Was Built (Session 6: Broken Feature Fixes & Free Mouse)
+ 11. Known Issues & Fixes Applied
+ 12. How to Run
+ 13. How to Add a New Role
+ 14. How to Add a New Interactable Object
+ 15. How to Add STL 3D Models
+ 16. Tunable Settings
+ 17. Dependencies
+ 18. Current State / What Works
+
+================================================================================
+1. PROJECT OVERVIEW
+================================================================================
+
+A browser-based first-person "VR-like" career simulator built with:
+- Three.js r128 (loaded from CDN, no build tools)
+- Vanilla HTML/CSS/JavaScript (no frameworks)
+- Single-page app that runs by opening index.html
+
+Users choose a profession (Doctor, Engineer, Chemist, Architect, Pilot),
+enter a first-person 3D room, look around with the mouse (pointer-lock),
+move with WASD, and interact with objects using the E key.
+
+Each room has 8-10 interactable objects with detailed real-world descriptions
+displayed in a slide-in info panel. A task system tracks which objects
+the player has explored.
+
+================================================================================
+2. FILE STRUCTURE
+================================================================================
+
+├── index.html              Main HTML file (UI overlays + script tags)
+├── style.css               All CSS styling (animations, HUD, selection screen)
+├── roles.js                Role data definitions (ROLES array) — data only
+├── controls.js             VRControls module (pointer lock, WASD, jump, sprint)
+├── interactions.js         VRInteractions module (raycasting, highlights, prompts)
+├── BloomPostFX.js          Custom bloom post-processing (no EffectComposer)
+├── Particles.js            Lightweight THREE.Points particle system
+├── CanvasTextures.js       Live animated canvas textures for instrument screens
+├── main.js                 Main entry point (Three.js init, scene building, loop)
+└── PROJECT_REPORT.txt      This file
+
+The original monolithic file (vr-career-simulator.html) still exists but
+is no longer used — it was the single-file version before restructuring.
+
+================================================================================
+3. ARCHITECTURE & MODULE SYSTEM
+================================================================================
+
+All JS files use the IIFE (Immediately Invoked Function Expression) pattern
+to define globals without polluting the global scope. No ES modules, no
+bundlers — everything loaded via <script src="..."> tags.
+
+LOAD ORDER (critical — must stay this way):
+  1. roles.js          — defines ROLES array (no dependencies)
+  2. controls.js       — defines VRControls (no THREE at top level)
+  3. interactions.js   — defines VRInteractions (no THREE at top level)
+  4. BloomPostFX.js    — defines BloomPostFX (no THREE at top level)
+  5. Particles.js      — defines ParticleSystem (no THREE at top level)
+  6. CanvasTextures.js — defines CanvasTextureManager (no THREE at top level)
+  7. main.js           — loads Three.js from CDN dynamically, then calls init()
+
+KEY RULE: No file may reference THREE at the top level of its IIFE.
+THREE is only available after the CDN script loads (async). All THREE
+usage must be inside functions/constructors that are called AFTER init().
+This was the main bug encountered twice during development.
+
+MODULE API:
+  VRControls:
+    init(camera, container)  — call after THREE loads
+    enable() / disable()
+    update(dt)               — call every frame
+    setBounds({minX,maxX,minZ,maxZ})
+    requestLock()
+    setYaw(v) / setPitch(v)
+    setOnFootstep(fn)        — callback for footstep sounds
+    getYaw() / getPitch()    — current look angles
+    isSprinting() / isCrouching() / isMoving()
+    getStamina() / getStaminaMax()
+    getBobOffset()           — {x, y} head bob offsets
+
+  VRInteractions:
+    init()                   — call after THREE loads
+    setInteractables(meshes) — array of Three.js meshes
+    clear()
+    enable() / disable()
+    update(camera)           — call every frame
+
+  VRTasks:
+    init(tasks)              — array of {id, label, objectName}
+    complete(objectName)     — marks task done, shows notification
+
+  VRSound:
+    init() / beep(freq,dur,vol) / interact() / taskDone() / allDone()
+    toggle() — returns new on/off state
+
+  Quality:
+    detect() / setTier(0-2) / getTier() / cycleTier()
+    shadowsEnabled() / bloomEnabled() / particlesEnabled() / screensEnabled()
+
+  BloomPostFX:
+    constructor(renderer, scene, camera, opts)
+      opts: { threshold, intensity, blurSize, grain, vignette,
+              chromAb, exposure }
+    render() — replaces renderer.render(scene, camera)
+    resize(w, h) / dispose() / enabled property
+
+  ParticleSystem:
+    constructor(scene, {preset, count, bounds, origin})
+      presets: dust, steam, sparks, firefly, sparkle, smoke, confetti
+    update(dt) / dispose() / setVisible(bool)
+
+  CanvasTextureManager:
+    constructor()
+    create(type, opts) — returns THREE.CanvasTexture
+    update()           — call every 3rd frame
+    dispose()
+
+================================================================================
+4. DETAILED FILE DESCRIPTIONS
+================================================================================
+
+--- index.html ---
+  Main HTML shell containing:
+  - Role selection screen (gradient background, animated cards)
+  - Instructions overlay (WASD/Mouse/E/Shift/Space/Esc guide)
+  - Pointer lock prompt ("Click to resume")
+  - Scene transition overlay (fade-to-black div)
+  - HUD: crosshair, role label, task panel, interaction prompt,
+    info panel (slide-in), sound toggle, back button, notification toast,
+    quality badge, mini instructions
+  - Canvas container for Three.js
+  - All 7 script tags in dependency order
+
+--- style.css ---
+  All UI styling. Key sections:
+  1. Reset & base styles
+  2. Canvas (fullscreen fixed)
+  3. Role selection screen with staggered card entrance animations
+     (each card fades+slides in with increasing delay) and parallax
+     tilt effect following mouse position
+  4. Instructions overlay with fade-in animation
+  5. Pointer lock prompt with glow pulse animation
+  6. HUD elements:
+     - Crosshair with spring-animated state changes (cubic-bezier overshoot)
+     - Role label with slide-in
+     - Task panel with slide-in, task completion checkmark pops with bounce
+     - Interaction prompt with spring fade+slide
+     - Info panel with spring slide-in+scale (CSS transition, not animation)
+     - Notification toast with bounce-in/bounce-out (scale transform)
+  7. Scene transition overlay (opacity fade)
+  8. Quality badge (bottom-right, click to cycle)
+
+  CSS animations used:
+  - gradientShift (selection screen background)
+  - titleShift (rainbow gradient text)
+  - cardEnter (staggered card entrance)
+  - instrFadeIn (instructions box)
+  - lockPulse (pointer lock glow)
+  - pulse (click prompt)
+  - fadeSlideIn (HUD elements)
+  - checkPop (task completion bounce)
+
+--- roles.js ---
+  Pure data file defining the ROLES array. Each role object contains:
+  {
+    id, title, icon, description, accentColor,
+    roomColor, floorColor, ceilingColor,
+    roomSize: {width, height, depth},
+    playerStart: {x, y, z},
+    ambientColor, ambientIntensity,
+    lights: [{type, color, intensity, pos, target}],
+    tasks: [{id, label, objectName}],
+    objects: [{g, s, p, c, em, ei, rot, tr, op,
+               name, interactable, promptText, interactionText,
+               anim, screenType}]
+  }
+
+  5 roles: Doctor, Engineer, Chemist, Architect, Pilot
+  Each has 8-10 interactable objects with detailed real-world descriptions.
+
+  Object geometry types (field "g"):
+    "box"    — BoxGeometry(s[0], s[1], s[2])
+    "cyl"    — CylinderGeometry(s[0], s[1], s[2], s[3]||16)
+    "sphere" — SphereGeometry(s[0], s[1]||16, s[2]||16)
+
+  Optional object fields (additive, backward-compatible):
+    anim: { type: 'spin'|'bob'|'pulse'|'swing'|'drip'|'flicker'|
+                   'breathe'|'wobble'|'float'|'shimmer'|'glowPulse'|
+                   'drift'|'elastic'|'rotate3d',
+            speed: number, amplitude: number }
+    screenType: 'heartrate'|'oscilloscope'|'radar'|'gauge'|'crt'|
+               'equalizer'|'compass'|'map'|'code'
+
+--- controls.js ---
+  VRControls module. Handles:
+  - Pointer lock mouse look (yaw/pitch with clamping)
+  - WASD movement relative to camera direction
+  - Sprint (Shift key, 1.8x multiplier)
+  - Jump with simple gravity (Space key)
+  - Bounding box wall collision (clamps position)
+  - Pre-allocated THREE.Vector3 for _fw, _rt, _mv (no per-frame allocations)
+
+  Tunable constants at top of file:
+    SPEED=4, SPRINT=1.8, SENS=0.002, JUMPV=5, GRAV=12, PH=1.6, PR=0.3
+
+--- interactions.js ---
+  VRInteractions module. Handles:
+  - Raycasts from screen center (THREE.Raycaster)
+  - Detects interactable objects within IDIST=5 units
+  - Highlights hovered object (changes emissive color/intensity)
+  - Shows "E to interact" prompt (spring-animated via CSS)
+  - Opens info panel with HTML content on E key
+  - Calls VRTasks.complete() and VRSound.interact() on interaction
+  - Stores original emissive values per-object for clean unhighlight
+
+--- BloomPostFX.js ---
+  Self-contained bloom post-processing. No EffectComposer dependency.
+  Pipeline: camera render → threshold → Gaussian blur (h+v) → composite
+
+  Uses WebGLRenderTarget (half-res for blur passes), ShaderMaterial,
+  and a full-screen quad. 4 shader programs:
+  - Threshold: extracts pixels above brightness threshold
+  - Blur: 9-tap Gaussian (sigma ~2.0), separable h+v passes
+  - Composite: additive blend of scene + bloom
+
+  Constructor: BloomPostFX(renderer, scene, camera, {threshold, intensity, blurSize})
+  Methods: render(), resize(w,h), dispose(), enabled property
+
+--- Particles.js ---
+  Lightweight THREE.Points-based particle system.
+  3 presets: 'dust' (tiny motes), 'steam' (rising wisps), 'sparks' (bright dots)
+  Particles driven by sine offsets for organic motion — no physics engine.
+  Pre-allocated Float32Array for positions/velocities/lifetimes.
+
+  Constructor: ParticleSystem(scene, {preset, count, bounds, origin})
+  Methods: update(dt), dispose(), setVisible(bool)
+
+--- CanvasTextures.js ---
+  Manages live-updating CanvasTexture objects for in-world screens.
+  5 screen types:
+  - heartrate: ECG waveform with grid, heart icon, SpO2 text
+  - oscilloscope: dual-channel waveforms (yellow sine + cyan square)
+  - radar: rotating sweep line with blips, ring grid
+  - crt: scanline effect, flickering status text
+  - gauge: circular arc with needle, percentage readout
+
+  Updates every 3rd frame for performance. Each texture is a canvas element
+  drawn with 2D context, wrapped in THREE.CanvasTexture.
+
+--- main.js ---
+  Main entry point (~770 lines). Handles:
+  - Quality auto-detection (GPU info via WEBGL_debug_renderer_info)
+  - Three.js initialization with ACES tone mapping + PCFSoft shadows
+  - BloomPostFX setup (high quality only)
+  - Scene building from role data (walls, floor, ceiling, objects, lights)
+  - Directional light for shadows (medium+ quality)
+  - Fog per-role
+  - Light shaft cones (additive-blended geometry)
+  - Canvas texture assignment to screen objects (screenType field)
+  - Animation system (reads anim field from objects):
+    spin — rotates object around Y axis
+    bob — sine-wave vertical oscillation
+    pulse — emissive intensity oscillation
+    swing — sine-wave Z rotation
+    drip — position drops then resets (for IV drip)
+    flicker — legacy emissive flicker
+  - Dust particles in every room (medium+ quality)
+  - Camera lerp (ease-out cubic) on role entry
+  - Scene transition (fade-to-black overlay)
+  - Sound-reactive lighting (lights pulse on interaction beeps)
+  - Parallax tilt on role selection cards
+  - Render loop: controls → interactions → camera lerp → animations →
+    sound-reactive → particles → screen textures → bloom/render
+  - Three.js loaded dynamically from CDN (with error fallback)
+
+================================================================================
+5. WHAT WAS BUILT (SESSION 1: RESTRUCTURING)
+================================================================================
+
+Original state: Single monolithic HTML file (vr-career-simulator.html)
+with all CSS, JS, and role data inline.
+
+Restructured into 6 separate files:
+  - index.html (DOM shell)
+  - style.css (all styling)
+  - roles.js (role data)
+  - controls.js (first-person controls)
+  - interactions.js (raycasting system)
+  - main.js (entry point, scene building, render loop)
+
+All existing functionality preserved:
+- 5 roles with 8-10 interactable objects each
+- Pointer lock FPS controls (WASD + mouse)
+- Sprint (Shift) and jump (Space)
+- Raycasting interaction system with E key
+- Task tracking system with notifications
+- Sound effects (Web Audio API beeps)
+- Info panel with rich HTML content
+- Crosshair with active state
+- Back button to return to role selection
+
+Bug fixed: THREE references at top level of IIFEs crashed before CDN loaded.
+Fixed by deferring all THREE usage to init() functions.
+
+================================================================================
+6. WHAT WAS BUILT (SESSION 2: VISUAL OVERHAUL)
+================================================================================
+
+NEW FILES CREATED:
+  BloomPostFX.js — Custom bloom post-processing
+  Particles.js — Dust/steam particle system
+  CanvasTextures.js — Live animated instrument screens
+
+UPGRADED main.js:
+  - ACES Filmic Tone Mapping (cinematic contrast)
+  - PCFSoft Shadow Map type
+  - Directional light for shadows (1024x1024 shadow map)
+  - Spot light shadows on key lights
+  - Floor/walls receive shadows, objects cast shadows
+  - Animation system with 6 types: spin, bob, pulse, swing, drip, flicker
+  - Canvas texture screens (ECG, oscilloscope, radar, CRT, gauges)
+  - Bloom post-processing (threshold + blur + composite)
+  - Dust particles in every room
+  - Light shaft cones from windows
+  - Camera ease-out cubic lerp on role entry
+  - Scene transition fade-to-black overlay
+  - Sound-reactive lighting pulses
+  - Quality auto-detection (Low/Medium/High) with manual cycling
+  - Parallax tilt on role selection cards
+
+UPGRADED style.css:
+  - Staggered card entrance animations (delayed per card)
+  - Parallax tilt on cards following mouse
+  - Spring-animated crosshair state change
+  - Bounce-in/bounce-out notifications
+  - Spring slide-in for interaction prompts
+  - Spring slide+scale for info panel
+  - Checkmark pop animation on task completion
+  - Glow pulse on pointer lock prompt
+  - Fade-slide-in for HUD elements
+  - Scene transition overlay styles
+
+UPDATED roles.js:
+  - Added anim fields to 10 key objects:
+    Heart Rate Monitor (pulse), Oscilloscope (pulse),
+    Server Rack (pulse), Fume Hood (bob), PFD (pulse),
+    Nav Display (pulse), Engine Instruments (pulse),
+    Defibrillator (pulse), 3D Printer (spin), Weather Radar (pulse)
+  - Added screenType to 5 objects:
+    Heart Rate Monitor (heartrate), Oscilloscope (oscilloscope),
+    PFD (gauge), Nav Display (radar), Engine Instruments (crt), Weather Radar (radar)
+  - Added anim to IV Stand drip
+
+UPDATED index.html:
+  - Added scene-transition div
+  - Added quality-badge div
+  - Added 3 new script tags (BloomPostFX.js, Particles.js, CanvasTextures.js)
+
+================================================================================
+7. WHAT WAS BUILT (SESSION 3: OBJECT STYLING & MATERIAL UPGRADE)
+================================================================================
+
+UPGRADED roles.js — Every plain-colored block across all 5 rooms now has
+emissive values, metallic sheen, subtle glows, and where appropriate,
+new animations. The goal was to make every object look polished like the
+Oscilloscope (which was already styled in Session 2).
+
+DOCTOR ROOM — 13 objects styled:
+  Hospital Bed (6 pieces):    Metallic frame glow + blue blanket sheen
+  Patient Chart:              Paper glow + pulse animation
+  Medicine Cabinet:           Metallic steel with shelf glows
+  Stethoscope:                Rubber/metal emissive
+  Blood Pressure Cuff:        Screen glow + pulse animation
+  Lab Results:                Paper glow
+  Oxygen Tank:                Metallic green cylinder
+  Prescription Pad:           Paper glow
+  IV Stand:                   Metallic pole + translucent bag
+  Clock:                      White face glow
+  Sharps Container:           Red warning glow
+  Trash Can:                  Metallic
+  Visitor Chair:              Blue upholstery + chrome legs
+
+ENGINEER ROOM — 13 objects styled:
+  Circuit Board:              Green PCB trace glow + pulse animation
+  Chip Components:            Bright LED indicator glows (red + green)
+  Oscilloscope (screen):      Already styled (Session 2)
+  Blueprint:                  Blue paper glow
+  Multimeter:                 Yellow housing + screen pulse animation
+  Power Supply:               LED indicator glow
+  Soldering Station:          Iron glow
+  Logic Analyzer:             Screen glow
+  3D Printer:                 Already has spin anim (Session 2)
+  Server Rack:                Already has pulse anim (Session 2)
+  Left/Right Workbenches:     Dark surface glow + wooden leg glow
+  Whiteboard:                 Surface glow + metal tray
+  Chairs:                     Chrome base sheen
+
+CHEMIST ROOM — 12 objects styled:
+  Beaker (CuSO4):            Blue glass glow
+  Erlenmeyer Flask:           Green liquid glow
+  Round Bottom Flask:         Red liquid glow
+  Bunsen Burner:              Already has flame emissive (Session 2)
+  Periodic Table:             Element color glows (6 colored tiles)
+  Safety Data Sheet:          Yellow paper glow
+  pH Meter:                   Screen glow
+  Centrifuge:                 Metallic sheen
+  Analytical Balance:         Screen glow + base glow
+  Lab Notebook:               Cover glow
+  Spectrophotometer:          Already has screen (Session 2)
+  Molecular Model:            CPK colored glows (red/blue/white/black)
+  Test Tube Rack:             Wooden rack glow
+  Main Lab Bench:             Dark epoxy surface + chrome legs
+
+ARCHITECT ROOM — 12 objects styled:
+  Display Table:              Warm wood glow + leg glow
+  Scale Model:                Subtle glow
+  Glass Panel:                Blue translucent glow
+  Green Accent:               Green glow
+  Floor Plan:                 Paper glow
+  Material Samples:           Warm tone glow
+  Building Code Manual:       Red hardcover glow
+  Elevation Drawing:          Paper glow
+  CAD Workstation:            Monitor glow + desk glow
+  Site Survey Map:            Blue paper glow
+  Sustainability Report:      Green cover glow
+  Drafting Tools:             Golden ruler glow + dark pencil
+  Bookshelf:                  Warm wood glow + shelf glow
+  Plants:                     Foliage glow (green spheres)
+  Large Window:               Already has emissive (Session 2)
+
+PILOT ROOM — 8 objects styled:
+  Instrument Panel:           Console glow
+  Glareshield:                Subtle dark glow
+  Center Console:             Subtle blue glow
+  Throttle Quadrant:          Dark with metallic lever glow
+  Pre-Flight Checklist:       Yellow paper glow
+  Flight Plan:                Paper glow
+  Radio Panel:                Screen glow
+  Yoke (left + right):        Metallic grip sheen + dark shaft glow
+  Seats:                      Blue upholstery glow
+  Side Windows:               Already has emissive (Session 2)
+  Overhead Panel Indicators:  Already has glow spheres (Session 2)
+
+WHAT EACH STYLE FIELD DOES:
+  em (emissive color):   Hex color emitted by the object (self-illumination)
+  ei (emissive intensity): How bright the emissive glow is (0.0-1.5+)
+  anim: {type, speed, amplitude}: Animation applied to the object
+
+STYLING PATTERN USED:
+  - Metal objects (bed rails, chair legs, tools):  em: 0x616161, ei: 0.2-0.3
+  - Paper/documents:                               em: 0xf5f5f5, ei: 0.1-0.15
+  - Electronic screens/displays:                   em: 0x1a237e, ei: 0.2-0.4
+  - Wood furniture:                                em: 0x4e342e, ei: 0.1
+  - Colored indicators/LEDs:                       em: same as c, ei: 0.5-0.9
+  - Glass/translucent:                             em: matching, ei: 0.15-0.3
+
+================================================================================
+8. WHAT WAS BUILT (SESSION 4: MICRO-DETAILING & GEOMETRY POLISH)
+================================================================================
+
+Session 4 focused on making every shape as detailed and polished as possible.
+All rooms were enhanced with micro-geometry, rounder shapes, and dozens of
+new filler objects to make the spaces feel lived-in and realistic.
+
+DOCTOR ROOM — New shapes added:
+  Hospital Bed:     Added headboard (tall), footboard, side rails (L+R),
+                    4 caster wheels (cylinders), rounded pillow (cylinder)
+  Side Table:       Added 4 rounded chrome legs (cylinders)
+  Visitor Chair:    Added armrests, rounded cushion (cylinder), 4 chrome
+                    legs (cylinders) — was flat boxes, now 3D
+  Window:           Added crossbars, wooden sill, frame details
+  Wall Clock:       Added bezel ring, hour hand, minute hand, center dot
+                    (sphere) — was flat disc, now detailed clock
+  Trash Can:        Added rim (cylinder), foot pedal
+  New: Medical gloves box with glove sticking out (sphere)
+  New: Hand sanitizer dispenser (wall-mounted, cylinder nozzle)
+  New: Wall-mounted TV with mount arm (crt screenType)
+  New: Water pitcher (translucent cylinder) + cup on bedside
+  New: Call button on bed rail (yellow pulse animation)
+  New: Wall anatomical poster (flesh-colored inner rectangle)
+  New: Hand washing sign (blue)
+  New: Blood draw tray with 5 colored test tubes (translucent)
+  New: Small wall whiteboard with metal tray
+  New: 2 ceiling lights (round with glow)
+
+ENGINEER ROOM — New shapes added:
+  Workbenches:      Added 3 drawers each with chrome handles
+  Pegboard:         Added screwdrivers (cylinders), wrench, pliers
+  Whiteboard:       Added 3 colored markers + eraser on tray
+  Ceiling Lights:   Added round fixtures with glow + pendant cords
+  New: 3 cable spools (red, blue, green cylinders)
+  New: 3 stacked component bins (blue shades)
+  New: Coffee mug (cylinder) with handle + animated steam (bob)
+  New: Desk lamp (articulated: base + 2 arms + yellow shade)
+  New: Solder spool (small cylinder)
+  New: Wire stripper (red box)
+  New: Breadboard (white) with 3 colored jumper wires
+
+CHEMIST ROOM — New shapes added:
+  Beaker:           Added spout (box) + 2 graduation marks
+  Erlenmeyer Flask: Added wider bottom body (separate cylinder)
+  Round Flask:      Added neck + rim detail
+  Bunsen Burner:    Added gas inlet tube + collar (air adjustment)
+  Test Tube Rack:   Added side walls (2 thin boxes)
+  Lab Bench:        Added under-bench shelf + edge trim (chrome)
+  Stool:            Complete rebuild — padded seat (cylinder), chrome stem,
+                    footrest ring, 5-star base (cross), 4 caster wheels
+  Waste Bins:       Added lids (cylinder tops)
+  Safety Shower:    Added triangle detail
+  Eye Wash Station: Added 2 nozzle tubes (cylinders)
+  Fire Extinguisher: Added handle, nozzle, pressure gauge
+  New: Wash bottle (translucent cylinder) with nozzle
+  New: Safety goggles (2 lens cylinders + strap)
+  New: Volumetric flask (sphere + neck)
+  New: Drying rack with 4 inverted test tubes
+  New: Magnetic stirrer (white box + metal disc)
+  New: 10 more periodic table element tiles (row 2)
+  New: Ceiling light (round with glow)
+
+ARCHITECT ROOM — New shapes added:
+  Scale Model:      Added base platform, left/right wings, entrance canopy
+  Bookshelf:        Added 13 colored books (varied heights, 8+ colors)
+  Large Window:     Added frame (4 sides), crossbars, wooden sill
+  Plants:           Rebuilt with detailed pots, saucers, multiple leaf
+                    spheres (3D foliage instead of single ball)
+  New: Golden ruler + pencil with tip + eraser
+  New: Protractor (semi-circle, translucent)
+  New: Pen holder (cylinder) with 3 colored pens
+  New: Desk lamp (not added — available for future)
+
+PILOT ROOM — New shapes added:
+  Instrument Panel: Added bezel frame, 10 switch indicator lights
+  Center Console:   Added CRT screen (screenType), 4 chrome knobs,
+                    2 cup holders, coffee cup
+  Throttle:         Added rounded lever knobs (spheres), speed brake
+                    lever, flap lever
+  Windows:          Added front windshield + frame, 4 side window frames
+  Seats:            Rebuilt — rounded cushion (cylinder), headrest,
+                    armrests, seatbelt strap, more detail
+  New: Headset (hanging on seat, with microphone boom)
+  New: Flight bag (on floor, with handle + zipper line)
+  New: Rudder pedals (2 pedal boxes + arm bars)
+  New: 2 extra pedestal indicator lights (blue, yellow)
+  New: Cockpit floor (dark carpet)
+  New: Overhead dome light (2 cylinders, round glow)
+
+GEOMETRY IMPROVEMENTS:
+  - Rounded cushions on chairs/seats (cylinder instead of box)
+  - Chrome legs use cylinders instead of thin boxes
+  - Caster wheels are proper cylinders
+  - Window frames have crossbars and sills
+  - Clock has hands and bezel (was just a flat disc)
+  - Pillows are rounded (cylinder)
+  - Bookshelves have actual books with varied colors/heights
+  - Plants have multiple leaf spheres for 3D foliage
+  - Stool fully rebuilt with chrome stem, footrest, 5-star base
+  - Throttle levers have rounded knob tops (spheres)
+  - Seats have headrests and armrests
+
+================================================================================
+9. WHAT WAS BUILT (SESSION 5: MASTERPIECE UPGRADE)
+================================================================================
+
+Session 5 was a massive upgrade across ALL 9 files, adding dozens of new
+features, animation types, post-processing effects, and HUD elements.
+
+NEW FILES MODIFIED:
+  All 9 files were rewritten or heavily upgraded.
+
+--- controls.js — Enhanced Controls ---
+
+NEW FEATURES:
+  - Head Bob System: natural walking/sprinting motion with vertical bounce
+    and lateral sway. Frequency and amplitude scale with sprint state.
+    BOB_FREQ=8, BOB_AMP=0.04, BOB_LATERAL=0.02
+  - Crouch System (C key): smooth camera height transition from 1.6m to 1.0m.
+    Ease interpolation at 12x speed for smooth ducking motion.
+  - Smooth Mouse Interpolation: target yaw/pitch values are interpolated
+    toward actual values each frame (SMOOTH=0.15). Prevents jerky look.
+  - Sprint Stamina: 100-point stamina pool. Drains at 25/sec while sprinting,
+    regenerates at 15/sec when not sprinting. Must reach 20 to sprint again
+    after exhaustion. Visual stamina bar in HUD.
+  - Footstep Callback: VRControls.setOnFootstep(fn) hook. Called with
+    'walk' or 'sprint' type on each head bob peak. Used by VRSound.
+  - New getters: isSprinting(), isCrouching(), getStamina(), getStaminaMax(),
+    isMoving(), getBobOffset(), getPitch()
+
+TUNABLE CONSTANTS (at top of controls.js):
+  SPEED=4.5, SPRINT=1.8, SENS=0.002, SMOOTH=0.15, JUMPV=5, GRAV=12,
+  PH=1.6 (standing), CH=1.0 (crouching), PR=0.3,
+  BOB_FREQ=8, BOB_AMP=0.04, BOB_LATERAL=0.02,
+  STAMINA_MAX=100, STAMINA_DRAIN=25, STAMINA_REGEN=15, STAMINA_EXHAUST=20
+
+--- BloomPostFX.js — Cinematic Post-Processing ---
+
+NEW FEATURES (added to composite shader):
+  - Film Grain: subtle noise overlay driven by hash function + time.
+    Adds organic texture. Tunable via grain parameter (default 0.02).
+  - Vignette: darkened edges drawing focus to center. Distance-based
+    smoothstep falloff. Tunable via vignette parameter (default 0.35).
+  - Chromatic Aberration: subtle RGB split at screen edges based on
+    distance from center. Tunable via chromAb parameter (default 0.0012).
+  - Exposure Control: adjustable tone mapping exposure (default 1.1).
+  - Time-based grain: uses uTime uniform for animated grain pattern.
+
+CONSTRUCTOR OPTIONS:
+  BloomPostFX(renderer, scene, camera, {
+    threshold: 0.55,    // bloom brightness threshold
+    intensity: 0.65,    // bloom strength
+    blurSize: 2,        // blur pass iterations
+    grain: 0.02,        // film grain intensity
+    vignette: 0.35,     // vignette strength
+    chromAb: 0.0012,    // chromatic aberration amount
+    exposure: 1.1       // tone mapping exposure
+  })
+
+SHADER PIPELINE:
+  camera render → threshold → Gaussian blur (h+v) → composite
+  (scene + bloom + film grain + vignette + chromatic aberration)
+
+--- Particles.js — 7 Particle Presets ---
+
+NEW PRESETS (added to existing dust, steam, sparks):
+  - firefly: warm glowing particles (0xffff44) with extra wobble motion.
+    Size 0.06, speed 0.3, drift 0.5, emissive intensity 1.5.
+  - sparkle: twinkling stars with size modulation via sine wave.
+    Size 0.035, speed 0.1, emissive intensity 2.0.
+  - smoke: drifting translucent wisps (0x888888). Size 0.15, slow rise.
+  - confetti: colored pieces with gravity + tumble. Uses CONFETTI_COLORS
+    palette (8 colors). Each particle gets random color from palette.
+
+NEW FEATURES:
+  - Per-particle Color Variation: every particle gets a random color offset
+    based on preset's colorVar parameter (0-1 range).
+  - Per-particle Size Variation: every particle gets a random size offset
+    based on preset's sizeVar parameter.
+  - Vertex Colors: uses THREE.BufferAttribute for per-particle RGB colors.
+    Material uses vertexColors: true for per-particle coloring.
+  - Color Fade: particles fade in/out based on lifetime and preset's
+    fadeIn/fadeOut parameters.
+  - Confetti Gravity: confetti particles have gentle downward acceleration
+    and tumble drift via sine offset.
+
+NEW GETTERS: getStamina(), getStaminaMax(), isMoving(), getBobOffset()
+
+PRESET PARAMETERS:
+  { color, size, opacity, speed, drift, fadeIn, fadeOut,
+    emissive, emissiveIntensity, sizeVar, colorVar }
+
+--- CanvasTextures.js — 9 Screen Types ---
+
+NEW SCREEN TYPES (added to existing heartrate, oscilloscope, radar, crt, gauge):
+  - equalizer: 16-bar audio spectrum analyzer with gradient bars (green to red
+    based on frequency), peak dots, frequency labels (60Hz-20kHz).
+  - compass: rotating compass rose with cardinal/intercardinal directions,
+    tick marks, red heading pointer, digital degree readout.
+  - map: terrain contour lines, animated dashed route line with waypoints,
+    pulsing current position indicator, START/DEST labels.
+  - code: syntax-highlighted scrolling code with line numbers, cursor blink,
+    active line highlight. Keywords (purple), strings (green), functions (blue),
+    numbers (orange), punctuation (cyan).
+
+IMPROVED EXISTING TYPES:
+  - heartrate: added respiration trace (blue, bottom), timestamp display,
+    gradient background, enhanced glow.
+  - oscilloscope: added signal ringing effect, timebase label.
+  - radar: added outer ring glow, crosshair lines, range label, 2 extra blips,
+    blip fade/echo effect.
+  - crt: added secondary scan line, cursor blink, improved text.
+  - gauge: added tick marks (major/minor), color changes (green→yellow→red),
+    center cap, HEADING label.
+
+--- interactions.js — Proximity Glow System ---
+
+NEW FEATURES:
+  - Proximity-Based Glow: highlight intensity scales with distance.
+    Closer = brighter glow. Uses smooth interpolation (HIGHLIGHT_SPEED=4).
+  - Smooth Highlight Transitions: highlight fades in/out gradually instead of
+    instant on/off. Uses targetHL/highlightT interpolation.
+  - Color Shift on Close Approach: emissive color shifts from HCOL (0x335577)
+    to 0x64b5f6 when very close (< 50% of max distance).
+  - lerpColor() utility: blends two hex colors by factor t.
+  - Increased Interaction Range: IDIST changed from 5 to 6 units.
+
+--- main.js — Core Engine Upgrades ---
+
+NEW ANIMATION TYPES (8 new, total 14):
+  - breathe: scale pulse like breathing. Scale oscillates by amplitude * 0.1.
+  - wobble: combined rotation wobble on X and Z axes with different frequencies.
+  - float: gentle levitation with subtle tilt. Y position oscillates,
+    Y rotation slowly increases, X rotation sways.
+  - shimmer: rapid emissive flicker for lights/indicators. Two sine waves
+    at different frequencies for complex flicker pattern.
+  - glowPulse: smooth emissive color cycling. RGB values oscillate between
+    50-100% of base color. Uses baseEmissiveColor clone for reference.
+  - drift: slow horizontal drift via sine wave. X position oscillates.
+  - elastic: elastic bounce effect (overshoot then settle). Uses cubic
+    ease function for natural bounce.
+  - rotate3d: rotate on all 3 axes simultaneously at different speeds.
+
+NEW HUD SYSTEMS:
+  - Minimap: real-time circular minimap (120x120px, bottom-left). Shows:
+    room outline, interactable object dots, player position (green dot),
+    direction indicator (line), field of view cone. Updates every frame.
+  - Compass HUD: top-center compass showing cardinal direction + degrees.
+    Updates from VRControls.getYaw().
+  - Stamina Bar: 120px bar below crosshair. Shows when sprinting (< 95%).
+    Green gradient normally, red/orange when low (< 30%).
+  - Crouch Indicator: text badge when crouching ("🦶 CROUCHING").
+  - Effects Toggle Indicator: shows "Effects: ON/OFF" for 2 seconds
+    when G key toggles post-processing.
+
+ACHIEVEMENT SYSTEM:
+  - AchievementSystem module: tracks earned achievements via Set.
+  - Toast notification with golden border, bounce-in icon animation.
+  - Achievements earned:
+    - 'first_role': "🚀 First Steps" — Entered first career room
+    - 'half_tasks': "🔍 Halfway There" — Explored half the objects
+    - 'all_tasks': "🏆 Master Explorer" — Completed all tasks
+  - Reset on role change.
+
+SOUND SYSTEM UPGRADES:
+  - VRSound.footstep(type): plays quiet beep on head bob peaks.
+    'sprint' type plays slightly higher/faster.
+  - Tied to VRControls.setOnFootstep() callback.
+
+QUALITY & RENDERING:
+  - Tone mapping exposure increased to 1.1 (was 1.0, later 1.25 in Session 8).
+  - Floor geometry now 32x32 segments (was 1x1) for smoother appearance.
+  - Quality-based geometry segments: High=24, Medium=16, Low=8.
+  - BloomPostFX now includes grain, vignette, chromAb, exposure params.
+
+NEW KEYBOARD CONTROLS:
+  - C key: toggle crouch
+  - G key: toggle post-processing effects on/off
+
+--- style.css — New HUD Elements ---
+
+NEW CSS CLASSES & ELEMENTS:
+  - .ch-ring: pulsing crosshair ring on hover (ringPulse animation).
+  - #compass-hud: top-center compass container with blur backdrop.
+  - #stamina-container / #stamina-bar: sprint stamina bar with gradient.
+  - #stamina-container.active: shown when stamina < 95%.
+  - #stamina-bar.low: red/orange gradient when stamina < 30%.
+  - #crouch-indicator: crouching status badge.
+  - #minimap-canvas: circular minimap with border radius.
+  - #achievement-toast / .achievement-icon / .achievement-title / .achievement-desc:
+    achievement notification with golden glow and bounce icon animation.
+  - #effects-indicator: effects toggle status badge.
+  - #loading-overlay: loading spinner (hidden by default, not wired up yet).
+  - ::-webkit-scrollbar: custom scrollbar styling.
+  - Replaced color-mix() with rgba() for broader browser compatibility.
+
+CSS ANIMATIONS ADDED:
+  - ringPulse: pulsing crosshair ring border color.
+  - achievementBounce: icon bounce-in with rotation.
+
+--- index.html — New HUD Elements ---
+
+NEW DOM ELEMENTS:
+  - #loading-overlay: loading screen with spinner (hidden by default).
+  - .ch-ring: crosshair ring element inside #crosshair.
+  - #compass-hud: compass display with #compass-needle and #compass-heading.
+  - #stamina-container > #stamina-bar: stamina visualization.
+  - #crouch-indicator: crouching status text.
+  - #minimap-canvas: 120x120 canvas for minimap rendering.
+  - #achievement-toast: achievement notification with icon + title + desc.
+  - #effects-indicator: effects toggle feedback.
+
+UPDATED INSTRUCTIONS:
+  - Added C key (Crouch) and G key (Toggle effects) to instructions grid.
+
+--- roles.js — New Animations & fogColor ---
+
+NEW ROLE CONFIGURATION:
+  - fogColor field added to all 5 roles:
+    Doctor: 0x1a2332, Engineer: 0x1a1e24, Chemist: 0x1c2630,
+    Architect: 0x1e2a36, Pilot: 0x0d1117
+
+NEW ANIMATIONS ON EXISTING OBJECTS:
+
+  DOCTOR ROOM:
+  - IV drip sphere: float animation (gentle levitation)
+  - Call button: changed from 'pulse' to 'shimmer' (rapid flicker)
+
+  ENGINEER ROOM:
+  - Server rack LED indicators (3 spheres): shimmer animation
+    with different speeds (3, 2.5, 3.5) for organic blinking
+  - Coffee mug steam: changed from 'bob' to 'float' animation
+
+  CHEMIST ROOM:
+  - Molecular Model: rotate3d animation (slow 3-axis rotation)
+  - Bunsen burner outer flame: shimmer animation (speed 8)
+  - Bunsen burner inner flame: shimmer animation (speed 10)
+
+  ARCHITECT ROOM:
+  - Plant 1 main foliage: wobble animation (speed 0.8)
+  - Plant 1 extra leaves (2): wobble animation (speed 1.0, 1.2)
+  - Plant 2 main foliage: wobble animation (speed 0.9)
+  - Plant 2 extra leaf: wobble animation (speed 1.1)
+
+  PILOT ROOM:
+  - Cockpit indicator lights (10 spheres): all shimmer animation
+    with varied speeds (3-5) for realistic cockpit lighting
+
+================================================================================
+10. WHAT WAS BUILT (SESSION 6: BROKEN FEATURE FIXES & FREE MOUSE)
+=================================================================================
+
+Session 6 focused on fixing broken features that were defined but never
+wired up, and adding a new V-key free mouse feature for clicking UI buttons.
+
+--- FILES MODIFIED ---
+
+  controls.js  — V key handler, unlock state tracking
+  interactions.js — getCurrentTarget() getter added
+  main.js      — Keyboard handlers, button wiring, subsystem init, role setup
+  index.html   — V key in instructions, updated mini-instr bar
+
+--- WHAT WAS BROKEN BEFORE SESSION 6 ---
+
+The project had many systems defined (QuizSystem, ProfessorMode,
+ChallengeTimer, InventorySystem, NPCSystem, etc.) but NONE of them
+were connected to anything:
+
+  1. F key (pick up) — documented in instructions but had no handler
+  2. Q key (quiz mode) — QuizSystem existed but never triggered
+  3. P key (professor) — ProfessorMode existed but never triggered
+  4. T key (timer) — ChallengeTimer existed but never triggered
+  5. Quiz panel buttons — close/next buttons had no event listeners
+  6. Professor panel buttons — close/next buttons had no event listeners
+  7. Timer results close button — no event listener
+  8. Screenshot button — no event listener
+  9. Settings panel — toggle/close buttons and sliders not wired
+ 10. NPC dismiss button — no event listener
+ 11. Subsystems never initialized — ScoreSystem, InventorySystem,
+      ChallengeTimer, DayNightCycle, MiniLabelSystem, NPCSystem
+ 12. Per-role subsystems never set up on role select
+ 13. Render loop didn't update subsystems
+ 14. goBack() didn't clean up subsystems
+
+--- FIXES APPLIED ---
+
+interactions.js — Added getCurrentTarget()
+  - Added public getter so the F key (pick up) can access which object
+    the player is currently looking at.
+
+main.js — Keyboard Handlers (F, Q, P, T keys)
+  F key: Pick up item → adds to InventorySystem, shows notification,
+         awards 5 points via ScoreSystem. Shows warning if inventory full.
+  Q key: Quiz mode toggle → opens QuizSystem panel with career questions.
+  P key: Professor mode toggle → opens ProfessorMode panel with narration
+         tips and text-to-speech.
+  T key: Timer toggle → starts/stops ChallengeTimer.
+
+main.js — Button Event Listeners Wired
+  - Quiz panel: Close (×) button → QuizSystem.hide()
+  - Quiz panel: Next Question button → QuizSystem.next()
+  - Professor panel: Close (×) button → ProfessorMode.hide()
+  - Professor panel: Next Tip button → ProfessorMode.nextTip()
+  - Timer results: Continue button → hides results panel
+  - Screenshot button: 📸 → ScreenshotSystem.capture(renderer)
+  - Settings panel: ⚙️ toggle, close button, sensitivity slider,
+    FOV slider (updates camera.fov)
+  - NPC dialogue: "Got it ✓" dismiss button → NPCSystem.dismiss()
+
+main.js — Subsystem Initialization in init()
+  - ScoreSystem.init()
+  - InventorySystem.init()
+  - ChallengeTimer.init()
+  - DayNightCycle.init()
+  - MiniLabelSystem.init()
+  - NPCSystem.init(null)
+  - MobileControls.init()
+
+main.js — Per-Role Setup in selectRole()
+  - ScoreSystem.init() — resets score for new role
+  - InventorySystem.init() — clears inventory for new role
+  - ProfessorMode.init(role.id) — loads tips for this career
+  - QuizSystem.init(role.id) — loads quiz questions for this career
+  - NPCSystem.init(role.id) — sets up NPC dialogue data
+  - DayNightCycle.start() — begins day/night cycle
+  - ChallengeTimer.start() — starts challenge timer
+  - NPCSystem.spawnNPC(scene, role.id) — spawns NPC in the room
+
+main.js — Render Loop Updates
+  - ChallengeTimer.update()
+  - DayNightCycle.update(dt)
+  - NPCSystem.update(dt)
+  - MiniLabelSystem.update(camera, renderer)
+
+main.js — goBack() Cleanup
+  - NPCSystem.clear(scene) — removes NPC meshes
+  - ProfessorMode.hide()
+  - QuizSystem.hide()
+  - ChallengeTimer.stop()
+  - DayNightCycle.stop()
+  - MiniLabelSystem.clear()
+  - Hides all HUD panels: timer, score, inventory, day/night,
+    settings, professor, quiz, timer results, NPC dialogue
+
+controls.js — V Key Free Mouse
+  - Added vUnlocked flag to track intentional unlock via V key
+  - V key handler: sets vUnlocked=true, calls document.exitPointerLock()
+  - Modified onPointerLockChange(): when vUnlocked is true, the blocking
+    "Click to resume" prompt is hidden so user can click UI buttons
+  - When pointer lock re-engages (click canvas), vUnlocked resets to false
+  - Flow: Playing → Press V → Mouse free → Click buttons → Click canvas → Playing
+
+index.html — Updated Instructions
+  - Added V key to instructions grid: "Free mouse"
+  - Updated mini-instr bar to include V key
+
+--- WHAT EACH NEW KEY DOES ---
+
+  F — Pick up item under crosshair, add to inventory (+5 points)
+  Q — Open/close quiz panel (5 career-specific questions)
+  P — Open/close professor narration tips (with text-to-speech)
+  T — Start/stop challenge timer
+  V — Release mouse to click UI buttons freely
+  G — Toggle post-processing effects (existing, was only key that worked)
+
+================================================================================
+11. KNOWN ISSUES & FIXES APPLIED
+================================================================================
+
+ISSUE 1 (Session 1): Page stuck on loading after restructuring.
+  CAUSE: controls.js and interactions.js referenced THREE at top level
+         of their IIFEs (new THREE.Raycaster(), new THREE.Vector2()).
+         Three.js loads async from CDN, so these executed before THREE existed.
+  FIX: Moved all THREE references into init() functions, called from main.js
+       after Three.js CDN script onload.
+
+ISSUE 2 (Session 2): Page stuck on starting animation after visual overhaul.
+  CAUSE: main.js line 228 had `new THREE.Vector3()` at top level of IIFE
+         for cameraLerp state — same pattern as Issue 1.
+  FIX: Changed cameraLerp to use null values initially, allocated THREE.Vector3
+       objects inside initThree() after Three.js loads.
+
+ISSUE 3 (Session 5): Page stuck on starting animation after Masterpiece upgrade.
+  CAUSE: str_replace on roles.js Molecular Model object closed the outer
+         object literal prematurely. The line:
+           anim: { type: 'rotate3d', speed: 0.5, amplitude: 0 } },
+         had an extra } which closed the parent object, pushing
+         interactionText outside the object literal as a syntax error.
+  FIX: Changed } }, to }, so the anim object closes but the parent stays open.
+
+ISSUE 4 (Session 5): String.prototype.rpadStart is not a function (minor).
+  CAUSE: CanvasTextures.js _drawCode function used rpadStart which doesn't
+         exist in JavaScript. Should be padStart.
+  FIX: Changed rpadStart to padStart. Only affects 'code' screen type
+       which is not currently assigned to any object.
+
+ISSUE 5 (Session 5): color-mix() CSS not supported in all browsers.
+  CAUSE: style.css .role-card:hover used color-mix(in srgb, ...) which
+         is a newer CSS function not supported in all browsers.
+  FIX: Replaced with rgba(100,181,246,0.15) for broad compatibility.
+
+GENERAL RULE FOR THIS PROJECT:
+  NEVER reference THREE at the top level of any IIFE. Always defer to
+  init() or constructor functions that are called after Three.js loads.
+  NEVER use } }, to close an object with anim — always check that
+  interactionText remains inside the object literal.
+
+================================================================================
+11. HOW TO RUN
+================================================================================
+
+Just open index.html in a web browser. No build tools, no server needed.
+Three.js loads from CDN (cdnjs.cloudflare.com) — requires internet.
+
+For STL models or other assets, you'd need a local server (e.g., python -m
+http.server) since browsers block file:// requests for assets.
+
+================================================================================
+12. HOW TO ADD A NEW ROLE
+================================================================================
+
+1. Open roles.js
+2. Copy any existing role object from the ROLES array
+3. Change these required fields:
+   - id: must be unique string (e.g., "chef")
+   - title: display name (e.g., "Chef")
+   - icon: emoji (e.g., "👨‍🍳")
+   - description: short text
+   - accentColor: hex color for UI accent (e.g., "#ff7043")
+4. Define room:
+   - roomSize: {width, height, depth} in world units
+   - roomColor, floorColor, ceilingColor: hex colors
+   - fogColor: hex color for scene fog (match room aesthetic)
+   - playerStart: {x, y, z} — camera starting position
+5. Define lights array (at least 1 ambient + 1-2 point lights)
+6. Add interactable objects to objects[]:
+   - At least 3 with interactable: true, name, promptText, interactionText
+   - interactionText supports HTML (shown in info panel)
+   - Optional: anim: {type, speed, amplitude} for animations
+   - Optional: screenType: 'heartrate'|'oscilloscope'|'radar'|'gauge'|'crt'
+7. Add matching tasks[] entries (objectName must match object's name)
+8. The role card appears automatically on the selection screen
+
+================================================================================
+13. HOW TO ADD A NEW INTERACTABLE OBJECT
+================================================================================
+
+In roles.js, add to a role's objects[] array:
+
+  { g: "box", s: [1, 1, 1], p: [x, y, z], c: 0xff0000,
+    name: "My Object",
+    interactable: true,
+    promptText: "Examine My Object",
+    interactionText: "<strong>My Object</strong><br><br>Description here...",
+    anim: { type: 'pulse', speed: 2, amplitude: 0.1 },  // optional
+    screenType: 'crt'  // optional
+  }
+
+Then add a matching task:
+  { id: "t1", label: "Examine My Object", objectName: "My Object" }
+
+================================================================================
+14. HOW TO ADD STL 3D MODELS
+================================================================================
+
+Three.js has an STLLoader (in examples/jsm/loaders/STLLoader.js).
+To add STL models:
+
+1. Include the STLLoader script (from CDN or local copy)
+   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+   (Note: use the examples/js/ version for non-module script tags)
+
+2. In main.js, after the scene builds, load the STL:
+   var loader = new THREE.STLLoader();
+   loader.load('models/chair.stl', function(geometry) {
+     var material = new THREE.MeshStandardMaterial({ color: 0x8B4513 });
+     var mesh = new THREE.Mesh(geometry, material);
+     mesh.position.set(x, y, z);
+     mesh.scale.set(s, s, s);
+     scene.add(mesh);
+   });
+
+3. STL files must be served from a web server (not file://) due to CORS.
+   Run: python -m http.server 8000  (then open localhost:8000)
+
+4. For per-role models, add a models[] field to role definitions
+   and load them in buildScene().
+
+================================================================================
+15. TUNABLE SETTINGS
+================================================================================
+
+controls.js (at top of file):
+  SPEED       = 4.5   — walk speed (units/sec)
+  SPRINT      = 1.8   — sprint multiplier
+  SENS        = 0.002 — mouse sensitivity
+  SMOOTH      = 0.15  — mouse interpolation factor (0=instant, 1=frozen)
+  JUMPV       = 5     — jump velocity
+  GRAV        = 12    — gravity acceleration
+  PH          = 1.6   — player eye height (standing)
+  CH          = 1.0   — player eye height (crouching)
+  PR          = 0.3   — player collision radius
+  BOB_FREQ    = 8     — head bob frequency (cycles/sec)
+  BOB_AMP     = 0.04  — head bob vertical amplitude
+  BOB_LATERAL = 0.02  — head bob lateral sway amplitude
+  STAMINA_MAX     = 100 — max stamina points
+  STAMINA_DRAIN   = 25  — drain rate per second while sprinting
+  STAMINA_REGEN   = 15  — regen rate per second while not sprinting
+  STAMINA_EXHAUST = 20  — min stamina to start sprinting again
+
+interactions.js:
+  IDIST = 5      — max interaction distance
+  HCOL  = 0x335577 — highlight emissive color
+  HINT  = 0.3   — highlight emissive intensity
+
+main.js (inside initThree):
+  toneMappingExposure = 1.25 — ACES tone mapping exposure
+  bloom threshold = 0.72     — how bright a pixel must be to bloom
+  bloom intensity = 0.35     — bloom strength (subtle)
+  bloom blurSize  = 1        — blur pass iterations
+  shadow map size = 2048     — shadow resolution
+  SSAO intensity = 0.35     — contact shadow strength
+  SSAO radius    = 0.25     — contact shadow spread
+  fog near       = width*1.2 — fog starts (less dense)
+  fog far        = width*3.5 — fog ends (see further)
+
+Quality tiers (auto-detected or click badge to cycle):
+  Low (0):    No shadows, no bloom, no particles
+  Medium (1): Shadows + particles, no bloom
+  High (2):   Everything (shadows + bloom + particles + screens)
+
+================================================================================
+16. DEPENDENCIES
+================================================================================
+
+External (CDN):
+  Three.js r128 — https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js
+
+No other external dependencies. No npm, no bundler, no frameworks.
+
+================================================================================
+17. CURRENT STATE / WHAT WORKS
+================================================================================
+
+✅ Role selection screen with 5 roles (animated cards, parallax tilt)
+✅ First-person controls (WASD, mouse look, sprint, jump)
+✅ 3D rooms with walls, floor, ceiling, furniture, lights
+✅ Interaction system (raycasting, highlights, E key, info panel)
+✅ Task tracking (8-10 tasks per role, completion notifications)
+✅ Sound effects (Web Audio API beeps)
+✅ ACES filmic tone mapping
+✅ Shadow mapping (PCFSoft, directional + spot lights)
+✅ Bloom post-processing on emissive objects
+✅ Dust particles in rooms
+✅ Canvas texture screens (ECG, oscilloscope, radar, CRT, gauges)
+✅ 6 animation types (spin, bob, pulse, swing, drip, flicker)
+✅ Camera lerp on role entry
+✅ Scene transition fade-to-black
+✅ Sound-reactive lighting
+✅ Quality auto-detection (Low/Medium/High)
+✅ Spring-animated UI elements (crosshair, prompts, notifications)
+✅ Staggered card entrance animations
+✅ Responsive (resizes with window)
+✅ Emissive material styling on ALL objects across all 5 rooms
+✅ Metallic sheen on metal objects (bed rails, tools, chair legs, yokes)
+✅ Paper/document glow on charts, plans, checklists, reports
+✅ Electronic screen glow on monitors, meters, analyzers
+✅ LED indicator glows on circuit boards, server racks, power supplies
+✅ Colored emissive on periodic table tiles, molecular model atoms
+✅ Wood furniture glow on workbenches, bookshelf, display tables
+✅ Translucent glow on glass beakers, flasks, IV bags
+✅ New pulse animations on Patient Chart, Blood Pressure Cuff,
+   Circuit Board, Multimeter
+✅ Console/cockpit glow on instrument panel, center console
+✅ Micro-detailed hospital bed (headboard, footboard, rails, wheels, pillow)
+✅ Rounded chair cushions and chrome legs across all rooms
+✅ Window frames with crossbars and wooden sills
+✅ Detailed wall clock with hands and bezel
+✅ Stool rebuilt with chrome stem, footrest ring, 5-star base, casters
+✅ Workbench drawers with chrome handles
+✅ Pegboard tools (screwdrivers, wrench, pliers)
+✅ Whiteboard markers and eraser
+✅ Coffee mug with animated steam particles
+✅ Desk lamp with articulated arms
+✅ Bunsen burner with gas inlet and collar
+✅ Beaker spout and graduation marks
+✅ Flask neck and rim details
+✅ Fire extinguisher with handle, nozzle, pressure gauge
+✅ Scale model with base, wings, entrance canopy
+✅ Bookshelf with 13 colored books
+✅ Plants with multiple leaf spheres (3D foliage)
+✅ Pilot seats with headrests, armrests, seatbelts
+✅ Headset with microphone boom
+✅ Flight bag with zipper detail
+✅ Rudder pedals with arm bars
+✅ Cockpit floor carpet and overhead dome light
+✅ Dozens of new filler objects across all rooms
+
+✅ Head bob system (walking + sprint variants)
+✅ Crouch system (C key, smooth height transition)
+✅ Smooth mouse interpolation (no jerky look)
+✅ Sprint stamina system (100pt pool, drain/regen, exhaustion)
+✅ Film grain post-processing (hash-based noise overlay)
+✅ Vignette post-processing (distance-based edge darkening)
+✅ Chromatic aberration (RGB split at screen edges)
+✅ Exposure control (ACES tone mapping at 1.25)
+✅ Reinhard tone mapping curve (filmic, no crushed blacks)
+✅ 14 animation types (6 original + 8 new: breathe, wobble, float,
+   shimmer, glowPulse, drift, elastic, rotate3d)
+✅ 7 particle presets (dust, steam, sparks + firefly, sparkle, smoke, confetti)
+✅ Per-particle color and size variation
+✅ 9 canvas screen types (5 original + equalizer, compass, map, code)
+✅ Proximity-based interaction glow (closer = brighter)
+✅ Smooth highlight transitions (no instant on/off)
+✅ Minimap with player position, direction, FOV cone
+✅ Compass HUD with cardinal directions + degrees
+✅ Sprint stamina bar (visual feedback)
+✅ Crouch indicator
+✅ Achievement system (3 achievements: first role, halfway, master explorer)
+✅ Effects toggle (G key) for post-processing on/off
+✅ Footstep sounds on head bob peaks
+✅ Per-role fog colors (5 unique fog values)
+✅ Wobble animations on all plant leaves (Architect room)
+✅ Shimmer animations on all cockpit indicators (Pilot room)
+✅ Shimmer animations on server rack LEDs (Engineer room)
+✅ Rotate3d animation on molecular model (Chemist room)
+✅ Shimmer animations on Bunsen burner flames (Chemist room)
+✅ Float animation on IV drip (Doctor room)
+✅ Custom scrollbar styling
+✅ Broader browser compatibility (removed color-mix)
+✅ Higher floor geometry detail (32x32 segments)
+✅ Quality-based geometry segments (High=24, Med=16, Low=8)
+✅ Higher tone mapping exposure (1.25)
+✅ DOZENS of new filler objects across all rooms
+
+
+================================================================================
+  Session 6 Additions  
+================================================================================
+
+✅ F key pick-up system (adds items to inventory, +5 points per item)
+✅ Inventory system with 8 slots, visual panel, tooltips
+✅ Q key quiz mode (5 career-specific questions per role)
+✅ P key professor mode (narration tips with text-to-speech)
+✅ T key challenge timer (countdown with urgent state)
+✅ V key free mouse (releases pointer lock to click UI buttons)
+✅ All quiz panel buttons wired (close, next question)
+✅ All professor panel buttons wired (close, next tip)
+✅ Screenshot button (📸) functional
+✅ Settings panel (⚙️) with mouse sensitivity + FOV sliders
+✅ Timer results close button functional
+✅ NPC dismiss button (Got it ✓) functional
+✅ Score system with visual display and rating tiers
+✅ Day/night cycle system with ambient light changes
+✅ Mini label system (projected labels above objects)
+✅ Mobile touch controls fully wired (joystick + buttons)
+✅ NPC system (spawns one NPC per room with dialogue)
+✅ Proper cleanup of all systems on goBack()
+✅ Per-role initialization of all subsystems on role select
+✅ Render loop updates all subsystems (timer, day/night, NPC, labels)
+
+================================================================================
+  Session 8 Additions
+================================================================================
+
+✅ Bloom tuned — threshold 0.72, intensity 0.35, blur 1 (subtle glow)
+✅ SSAO disabled when bloom active (no double post-processing)
+✅ SSAO intensity reduced to 0.35 (subtle contact shadows)
+✅ SSAO uses soft mix instead of multiplicative darkening
+✅ Hemisphere light 2x brighter (realistic sky/ground fill)
+✅ Ambient light 0.8x stronger (no more pitch-black scenes)
+✅ Directional light doubled (0.3 → 0.6)
+✅ Fog pushed further out (near 1.2x, far 3.5x room width)
+✅ Tone mapping exposure 1.25 (brighter overall)
+✅ Day/night cycle ambient: 0.4-1.0 range (visible at all times)
+✅ Fog colors brightened for all 5 roles (no more near-black backgrounds)
+✅ Film Reinhard tone mapper replaces harsh S-curve
+✅ Film grain reduced to 0.012 (subtle, not distracting)
+✅ Vignette reduced to 0.18 (gentle edge darkening)
+✅ Chromatic aberration reduced to 0.0008
+✅ Color grading softened — contrast 1.04, saturation 1.08
+✅ High quality now looks properly bright and cinematic
+
+================================================================================
+  Session 7: Photorealistic Visual Overhaul
+================================================================================
+
+Session 7 was a massive visual upgrade focused on making the project look
+ultra-realistic. 2 new files created, 4 files upgraded, dozens of new
+features across the rendering pipeline.
+
+NEW FILES CREATED:
+  ProceduralTextures.js — Canvas-based procedural texture generator
+  SSAO.js — Screen-space ambient occlusion post-processing
+
+--- ProceduralTextures.js — New File ---
+
+Generates realistic textures at runtime without external files.
+All textures are canvas-based (512x512) with noise, FBM, and procedural
+patterns. Each texture type can produce diffuse, normal, and roughness maps.
+
+10 texture types:
+  wood — grain pattern with knots, grain lines, color variation
+  concrete — multi-octave noise with aggregate pattern and stains
+  tile — hospital/lab tile grid with grout lines, per-tile variation
+  fabric — woven cross-hatch pattern with folds
+  metalBrushed — horizontal brushed lines with color bands
+  metalPolished — near-uniform chrome with subtle reflection hint
+  noise — generic surface variation (FBM-based)
+  linoleum — smooth surface with subtle marbling
+  brick — offset brick pattern with mortar lines
+  marble — vein pattern via distorted sine with color variation
+
+Each generator produces canvas elements wrapped in THREE.CanvasTexture.
+Textures are cached by type + options for reuse across objects.
+
+Normal map generation:
+  generateNormalFromDiffuse() — Sobel-filter-based normal extraction
+  Reads luminance gradient of diffuse texture, outputs RGB normal map.
+  Adjustable strength parameter for bump intensity.
+
+Roughness map generation:
+  generateRoughnessFromDiffuse() — luminance-to-roughness conversion
+  Bright areas = smoother, dark areas = rougher.
+
+--- SSAO.js — New File ---
+
+Screen-space ambient occlusion for contact shadows where objects meet
+surfaces. Self-contained, no EffectComposer dependency.
+
+Pipeline: Render scene → Sample nearby depths → Calculate occlusion → Composite
+
+Features:
+  - 12-sample Poisson-disk-like kernel with time-based rotation
+  - Distance-based occlusion calculation with bias
+  - Edge-aware softening
+  - Background early-out (depth > 0.98)
+  - Adjustable radius and intensity
+
+Constructor: SSAO(renderer, scene, camera, {radius, intensity, bias})
+Methods: render(), resize(w,h), dispose(), setRadius(), setIntensity()
+
+--- BloomPostFX.js — Color Grading Upgrade ---
+
+NEW FEATURES added to composite shader:
+  - Temperature shift (warm/cool tint) — adds orange to highlights,
+    removes blue from shadows for warm cinematic look. Default: 0.05
+  - Contrast adjustment — S-curve contrast boost centered at 0.5.
+    Default: 1.12 (12% increase)
+  - Saturation control — increases color vibrancy by mixing with luma.
+    Default: 1.18 (18% increase)
+  - Subtle S-curve — filmic tone response via cubic smoothstep.
+    Adds slight highlight rolloff and shadow lift.
+
+NEW UNIFORMS:
+  uTemperature, uContrast, uSaturation
+
+NEW CONSTRUCTOR OPTIONS:
+  temperature: 0.05, contrast: 1.1, saturation: 1.15
+
+--- main.js — Rendering Pipeline Upgrade ---
+
+NEW FEATURES:
+
+1. Procedural Environment Map:
+   - generateEnvMap() function creates gradient-based cubemap
+   - Uses PMREMGenerator (Three.js r128) for proper PMREM processing
+   - Dark blue-to-gray gradient matching room aesthetics
+   - Applied to all materials for subtle reflections
+   - Metal objects get stronger env map intensity (0.6)
+   - Non-metal objects get subtle reflections (0.2)
+
+2. Smart Material Assignment (getMaterialForColor):
+   - Automatic material detection based on color heuristics:
+     Brown tones → wood (grain texture, roughness 0.7)
+     Silver/chrome → metal brushed (roughness 0.25, metalness 0.85)
+     Blue tones → fabric (woven texture, roughness 0.8)
+     Dark gray/black → rubber (roughness 0.85)
+     Bright white → paper/ceramic (roughness 0.3)
+     High saturation → plastic (noise texture, roughness 0.4)
+   - Explicit 'mat' field overrides from roles.js take priority
+   - Each material type gets appropriate:
+     - roughness (0.05 for glass to 0.95 for rubber)
+     - metalness (0.0 for fabric to 0.95 for polished metal)
+     - Procedural diffuse texture
+     - Procedural normal map (on High quality)
+     - Procedural roughness map (on High quality)
+     - Environment map reflection intensity
+
+3. Procedural Textures Applied:
+   - Floor: linoleum texture with normal + roughness maps
+   - Ceiling: concrete texture
+   - Walls: concrete texture with normal map (bump detail)
+   - Objects: auto-detected texture type based on color/material
+   - Wood objects get grain texture
+   - Metal objects get brushed/polished texture
+   - Fabric objects get woven texture
+   - Glass objects use MeshPhysicalMaterial with proper transparency
+
+4. Enhanced Lighting:
+   - Hemisphere light added (sky/ground color bleed)
+   - Ceiling color as sky hemisphere, floor color as ground
+   - Ambient light reduced to 30% (was 100%, later 80% in Session 8)
+   - Hemisphere multiplier: 2x ambient (Session 8)
+   - Creates realistic indirect illumination gradient
+
+5. Improved Shadows:
+   - Shadow map resolution increased from 1024 to 2048
+   - Better contact shadows on all surfaces
+
+6. SSAO Integration:
+   - Screen-space ambient occlusion added to render pipeline
+   - Contact shadows where objects meet surfaces
+   - Adds depth and grounding to all objects
+   - Only enabled on Medium quality (disabled when bloom is active — Session 8)
+   - Uses soft mix instead of multiplicative darkening (Session 8)
+
+7. Glass/Translucent Materials:
+   - Objects with mat:'glass' + tr:true use MeshPhysicalMaterial
+   - Better transparency with proper refraction hints
+   - Applied to: IV bags, beakers, flasks, test tubes, water pitchers,
+     glass panels in scale model
+
+--- roles.js — Material Hints Added ---
+
+Explicit material type ('mat' field) added to key objects:
+
+DOCTOR ROOM:
+  Hospital Bed frame: mat:'metalBrushed'
+  Bed mattress: mat:'fabric'
+  Blanket: mat:'fabric'
+  Pillow: mat:'fabric'
+  Headboard/Footboard: mat:'metalBrushed'
+  Side table: mat:'wood'
+  Medicine Cabinet: mat:'metalBrushed'
+  Visitor chair (chrome): mat:'metalPolished'
+  Visitor chair (cushion): mat:'fabric'
+  Water pitcher: mat:'glass'
+  TV: mat:'plastic'
+  Cart wheels: mat:'rubber'
+
+ENGINEER ROOM:
+  Workbench legs: mat:'wood'
+  Workbench surfaces: mat:'wood'
+  Circuit Board: mat:'plastic'
+  3D Printer: mat:'metalBrushed'
+  Multimeter: mat:'plastic'
+  Right workbench: mat:'wood'
+
+CHEMIST ROOM:
+  Lab bench: mat:'concrete'
+  Beaker (CuSO4): mat:'glass'
+  Erlenmeyer Flask: mat:'glass'
+  Round Bottom Flask: mat:'glass'
+  Bunsen Burner: mat:'metalBrushed'
+
+ARCHITECT ROOM:
+  Display table: mat:'wood'
+  Table legs: mat:'wood'
+  Glass atrium: mat:'glass'
+
+PILOT ROOM:
+  Instrument panel: mat:'plastic'
+  Glareshield: mat:'rubber'
+  Center console: mat:'metalBrushed'
+  Console knobs: mat:'metalPolished'
+
+All other objects auto-detect material from color heuristics.
+
+--- index.html — New Script Tags ---
+
+Added:
+  <script src="ProceduralTextures.js"></script>
+  <script src="SSAO.js"></script>
+
+Load order now: roles → controls → interactions → BloomPostFX → Particles
+→ CanvasTextures → ProceduralTextures → SSAO → main
+
+--- What Changed Visually ---
+
+BEFORE (Session 6):
+  - All objects were flat solid colors (MeshStandardMaterial + color)
+  - No reflections on any surface
+  - No surface detail (perfectly smooth)
+  - No contact shadows (objects floated)
+  - Simple ambient + point lighting
+  - Single shadow map at 1024px
+  - No color grading
+
+AFTER (Session 7):
+  - Floors have linoleum texture with tile grout lines
+  - Walls have concrete texture with subtle bumps
+  - Wood furniture has visible grain pattern
+  - Metal objects have brushed/polished texture with reflections
+  - Glass objects reflect the environment
+  - Fabric has woven texture (chairs, bedding)
+  - All surfaces have normal maps for micro-detail
+  - All surfaces have roughness maps for material variation
+  - Contact shadows ground objects to surfaces (SSAO)
+  - Hemisphere light creates realistic sky/ground color bleed
+  - Shadows at 2048px for crisp contact shadows
+  - Color grading adds warm cinematic tone
+  - Higher contrast and saturation for filmic look
+  - Environment reflections on all surfaces
+  - Metal objects are properly shiny/reflective
+  - Glass objects are properly transparent with reflections
+
+================================================================================
+  Session 8: High Quality Rendering Fixes
+================================================================================
+
+Session 8 fixed major visual issues with the High quality mode. The bloom
+was way too aggressive (blown-out glow on everything), the scene was far
+too dark (ambient light crushed by day/night cycle), SSAO was using color
+texture as depth (causing random dark patches), and the color grading was
+too harsh (crushed blacks). All of these combined made High quality look
+worse than Medium.
+
+--- FILES MODIFIED ---
+
+  BloomPostFX.js — Toned down all post-processing effects
+  main.js — Lighting, fog, exposure, SSAO fixes
+  roles.js — Brighter fog colors for all 5 roles
+  SSAO.js — Less aggressive contact shadows
+
+--- BloomPostFX.js — Post-Processing Fixes ---
+
+BEFORE (Session 7): threshold=0.55, intensity=0.65, blurSize=2,
+  grain=0.025, vignette=0.35, chromAb=0.0015, exposure=1.0,
+  temperature=0.05, contrast=1.1, saturation=1.15
+AFTER (Session 8): threshold=0.72, intensity=0.35, blurSize=1,
+  grain=0.012, vignette=0.18, chromAb=0.0008, exposure=1.3,
+  temperature=0.03, contrast=1.04, saturation=1.08
+
+SHADER CHANGES:
+  - Replaced harsh S-curve (c*c*(3-2c)) with soft Reinhard-style tone
+    mapper (c/(c+0.8)*1.4). Preserves highlights and shadows.
+  - Shadow lift increased from 0.008 to 0.04 minimum
+  - Vignette multiplier removed (was 1.5x, now 1x)
+  - Subtle desaturation blend added after S-curve to prevent over-saturation
+
+WHAT THIS FIXED:
+  - Bloom no longer blows out bright objects into giant white blobs
+  - Film grain is barely visible (was distracting)
+  - Edges aren't crushed to black (vignette)
+  - Contrast/saturation don't crush shadows to pure black
+  - Overall scene is brighter (exposure 1.0 → 1.3)
+
+--- main.js — Lighting & Scene Fixes ---
+
+LIGHTING INCREASES:
+  - Hemisphere light: ambientIntensity * 1.2 → * 2.0 (much brighter fill)
+  - Ambient light: ambientIntensity * 0.3 → * 0.8 (stronger base fill)
+  - Directional light: 0.3 → 0.6 intensity (stronger key light)
+
+FOG FIXES:
+  - Fog near: width * 0.7 → width * 1.2 (less dense, see further)
+  - Fog far: width * 2.2 → width * 3.5 (fog fades much slower)
+  - Prevents objects from being crushed to black at distance
+
+TONE MAPPING:
+  - renderer.toneMappingExposure: 1.1 → 1.25
+
+DAY/NIGHT CYCLE FIX:
+  - Night ambient: 0.2 → 0.5 (was pitch black at night)
+  - Day ambient range: 0.15 + brightness*0.35 → 0.4 + brightness*0.6
+  - Evenings are now well-lit instead of near-black
+
+SSAO FIXES:
+  - SSAO disabled when bloom is active (no double post-processing)
+  - SSAO radius: 0.35 → 0.25
+  - SSAO intensity: 0.6 → 0.35
+  - SSAO bias: 0.015 → 0.02
+
+QUALITY BADGE CLICK HANDLER:
+  - Now passes full color grading params (temperature, contrast, saturation)
+  - SSAO enable/disable synced with bloom toggle
+
+--- SSAO.js — Shader Fix ---
+
+  - Changed from multiplicative darkening (color *= occlusion) to soft mix:
+    color = mix(color * 0.85, color, occlusion)
+  - Prevents SSAO from crushing dark areas to pure black
+  - Uses color luminance as a proxy for depth (not ideal, but much better
+    than the broken depth-from-color approach before)
+
+--- roles.js — Brighter Fog Colors ---
+
+All 5 role fog colors brightened from near-black to visible room tones.
+These also serve as the scene.background color.
+
+  Doctor:    0x1a2332 → 0x2a3a50 (visible dark blue-gray)
+  Engineer:  0x1a1e24 → 0x2a3040 (visible warm gray)
+  Chemist:   0x1c2630 → 0x2a3a48 (visible cool gray)
+  Architect: 0x1e2a36 → 0x2e3e50 (visible blue-gray)
+  Pilot:     0x0d1117 → 0x1a2030 (visible dark navy)
+
+--- What Changed Visually ---
+
+BEFORE (Session 7 High Quality):
+  - Everything blown out with giant white bloom halos
+  - Room walls/floor/ceiling nearly invisible (too dark)
+  - Objects have huge white glow blobs around them
+  - Edges of screen are pitch black (vignette too strong)
+  - Contrast crushes all shadows to pure black
+  - SSAO creates random dark patches on surfaces
+  - Day/night cycle makes everything even darker
+  - Overall: blurry, dark, washed-out mess
+
+AFTER (Session 8 High Quality):
+  - Bloom is subtle — only very bright emissive objects glow gently
+  - Room walls, floor, ceiling are clearly visible with texture detail
+  - Objects have soft natural lighting, not blown-out halos
+  - Edges of screen have gentle darkening (cinematic, not crushing)
+  - Shadows are visible but not crushed to black
+  - Contact shadows are subtle and realistic
+  - Day/night cycle works without making scene invisible
+  - Overall: bright, clear, cinematic with subtle post-processing
+
+================================================================================
+  END OF REPORT
+================================================================================

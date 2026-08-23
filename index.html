@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>VR Career Simulator</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ═══════════════════════════════════════════════
+       ROLE SELECTION SCREEN
+       ═══════════════════════════════════════════════ -->
+  <div id="role-selection-screen">
+    <div class="sel-container">
+      <h1 class="sel-title">VR Career Simulator</h1>
+      <p class="sel-sub">Choose your profession — explore, interact, and complete tasks</p>
+      <div id="role-cards" class="role-cards"></div>
+      <p class="sel-foot">Built with Three.js &bull; WASD + Mouse &bull; Fully Interactive</p>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+       LOADING OVERLAY
+       ═══════════════════════════════════════════════ -->
+  <div id="loading-overlay" class="hidden">
+    <div class="loading-content">
+      <div class="loading-spinner"></div>
+      <p class="loading-text">Loading experience...</p>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+       INSTRUCTIONS OVERLAY
+       ═══════════════════════════════════════════════ -->
+  <div id="instructions-overlay" class="hidden">
+    <div class="instr-box">
+      <h2>Controls</h2>
+      <div class="instr-grid">
+        <div class="instr-item"><div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></div><span>Move</span></div>
+        <div class="instr-item"><kbd>Mouse</kbd><span>Look around</span></div>
+        <div class="instr-item"><kbd>E</kbd><span>Interact</span></div>
+        <div class="instr-item"><kbd>Shift</kbd><span>Sprint</span></div>
+        <div class="instr-item"><kbd>Space</kbd><span>Jump</span></div>
+        <div class="instr-item"><kbd>C</kbd><span>Crouch</span></div>
+        <div class="instr-item"><kbd>F</kbd><span>Pick up item</span></div>
+        <div class="instr-item"><kbd>Esc</kbd><span>Release mouse</span></div>
+        <div class="instr-item"><kbd>G</kbd><span>Toggle effects</span></div>
+        <div class="instr-item"><kbd>T</kbd><span>Toggle timer</span></div>
+        <div class="instr-item"><kbd>Q</kbd><span>Quiz mode</span></div>
+        <div class="instr-item"><kbd>P</kbd><span>Professor mode</span></div>
+        <div class="instr-item"><kbd>V</kbd><span>Free mouse</span></div>
+      </div>
+      <p class="click-p">Click anywhere to start</p>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+       POINTER LOCK PROMPT
+       ═══════════════════════════════════════════════ -->
+  <div id="pointer-lock-prompt" class="hidden">
+    <div class="lock-box"><p>Click to resume</p></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+       SCENE TRANSITION OVERLAY
+       ═══════════════════════════════════════════════ -->
+  <div id="scene-transition"></div>
+
+  <!-- ═══════════════════════════════════════════════
+       DOOR ENTRANCE ANIMATION
+       ═══════════════════════════════════════════════ -->
+  <div id="door-overlay" class="hidden">
+    <div id="door-left"></div>
+    <div id="door-right"></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+       HUD — Heads-Up Display
+       ═══════════════════════════════════════════════ -->
+  <div id="hud" class="hidden">
+    <!-- Crosshair -->
+    <div id="crosshair">
+      <div class="ch-dot"></div>
+      <div class="ch-line ch-t"></div>
+      <div class="ch-line ch-b"></div>
+      <div class="ch-line ch-l"></div>
+      <div class="ch-line ch-r"></div>
+      <div class="ch-ring"></div>
+    </div>
+
+    <!-- Role label -->
+    <div id="role-label"></div>
+
+    <!-- Task panel -->
+    <div id="task-panel" class="hidden">
+      <h4>📋 Tasks</h4>
+      <div id="task-list"></div>
+    </div>
+
+
+
+    <!-- Inventory panel -->
+    <div id="inventory-panel" class="hidden">
+      <h4>🎒 Inventory</h4>
+      <div id="inventory-slots"></div>
+    </div>
+
+    <!-- Day/Night indicator -->
+    <div id="daynight-indicator" class="hidden">
+      <span id="daynight-icon">☀️</span>
+      <span id="daynight-text">Day</span>
+    </div>
+
+    <!-- Interaction prompt -->
+    <div id="interaction-prompt" class="hidden">
+      <span id="prompt-text"></span>
+    </div>
+
+    <!-- Info panel (slide-in) -->
+    <div id="info-panel" class="hidden">
+      <div class="ip-header">
+        <h3 id="ip-title">Object</h3>
+        <button id="ip-close">&times;</button>
+      </div>
+      <div id="ip-body">
+        <p id="ip-text"></p>
+      </div>
+    </div>
+
+    <!-- Compass HUD (top center) -->
+    <div id="compass-hud">
+      <div id="compass-needle"></div>
+      <span id="compass-heading">N</span>
+    </div>
+
+    <!-- Stamina bar (below crosshair) -->
+    <div id="stamina-container">
+      <div id="stamina-bar"></div>
+    </div>
+
+    <!-- Crouch indicator -->
+    <div id="crouch-indicator" class="hidden">🦶 CROUCHING</div>
+
+    <!-- Minimap (bottom left) -->
+    <canvas id="minimap-canvas" width="120" height="120"></canvas>
+
+    <!-- Mini labels container -->
+    <div id="mini-labels-container"></div>
+
+    <!-- Sound toggle -->
+    <button id="sound-toggle">🔊</button>
+
+    <!-- Screenshot button -->
+    <button id="screenshot-btn" title="Take Screenshot">📸</button>
+
+    <!-- Back button -->
+    <button id="back-btn">&#8592; Back</button>
+
+    <!-- Room navigation arrows -->
+    <div id="room-nav" class="hidden">
+      <button id="nav-prev" class="nav-btn">◀ Prev Room</button>
+      <button id="nav-next" class="nav-btn">Next Room ▶</button>
+    </div>
+
+    <!-- Achievement toast -->
+    <div id="achievement-toast" class="hidden">
+      <div class="achievement-icon">🏆</div>
+      <div class="achievement-text">
+        <div class="achievement-title" id="achievement-title"></div>
+        <div class="achievement-desc" id="achievement-desc"></div>
+      </div>
+    </div>
+
+    <!-- Notification toast -->
+    <div id="notification"></div>
+
+    <!-- Object counter -->
+    <div id="obj-counter"></div>
+
+    <!-- Quality badge -->
+    <div id="quality-badge" title="Click to cycle quality">Quality: High</div>
+
+    <!-- Effects toggle indicator -->
+    <div id="effects-indicator" class="hidden">Effects: ON</div>
+
+    <!-- Settings panel -->
+    <div id="settings-panel" class="hidden">
+      <h4>⚙️ Settings</h4>
+      <div class="setting-row">
+        <label>Mouse Sensitivity</label>
+        <input type="range" id="sensitivity-slider" min="0.5" max="5" step="0.1" value="2">
+        <span id="sensitivity-value">2.0</span>
+      </div>
+      <div class="setting-row">
+        <label>FOV</label>
+        <input type="range" id="fov-slider" min="50" max="110" step="1" value="70">
+        <span id="fov-value">70°</span>
+      </div>
+      <button id="settings-close" class="settings-close-btn">✕ Close</button>
+    </div>
+    <button id="settings-toggle" title="Settings">⚙️</button>
+
+    <!-- Professor mode narration panel -->
+    <div id="professor-panel" class="hidden">
+      <div class="professor-glow"></div>
+      <div class="professor-header">
+        <div class="professor-avatar-wrap">
+          <span class="professor-avatar">👨‍🏫</span>
+        </div>
+        <div class="professor-title-group">
+          <span class="professor-label">Professor Mode</span>
+          <span class="professor-role-tag" id="professor-role-tag"></span>
+        </div>
+        <div class="professor-counter">
+          <span id="professor-tip-num">1</span><span class="professor-counter-sep">/</span><span id="professor-tip-total">6</span>
+        </div>
+        <button id="professor-close" class="professor-close-btn">&times;</button>
+      </div>
+      <div class="professor-body">
+        <div class="professor-quote-mark">“</div>
+        <div id="professor-text"></div>
+        <div class="professor-quote-end">”</div>
+      </div>
+      <div class="professor-footer">
+        <div class="professor-progress">
+          <div class="professor-progress-bar" id="professor-progress-bar"></div>
+        </div>
+        <button id="professor-next" class="professor-next-btn">
+          <span>Next Tip</span>
+          <span class="professor-next-arrow">▶</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Quiz mode panel -->
+    <div id="quiz-panel" class="hidden">
+      <div class="quiz-header">
+        <span>📝 Quiz Mode</span>
+        <span id="quiz-score">Score: 0/0</span>
+        <button id="quiz-close">&times;</button>
+      </div>
+      <div id="quiz-question"></div>
+      <div id="quiz-options"></div>
+      <div id="quiz-feedback" class="hidden"></div>
+      <button id="quiz-next" class="hidden">Next Question ▶</button>
+    </div>
+
+    <!-- Timer mode results -->
+    <div id="timer-results" class="hidden">
+      <div class="timer-results-box">
+        <h2>⏱️ Challenge Complete!</h2>
+        <div id="timer-results-time"></div>
+        <div id="timer-results-score"></div>
+        <div id="timer-results-rating"></div>
+        <button id="timer-results-close">Continue</button>
+      </div>
+    </div>
+
+    <!-- Mini instructions -->
+    <div id="mini-instr">WASD move • Mouse look • E interact • F pick up • C crouch • Shift sprint • Q quiz • P professor • V free mouse</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+       MOBILE TOUCH CONTROLS
+       ═══════════════════════════════════════════════ -->
+  <div id="mobile-controls" class="hidden">
+    <div id="joystick-zone">
+      <div id="joystick-base">
+        <div id="joystick-knob"></div>
+      </div>
+    </div>
+    <div id="mobile-buttons">
+      <button id="mobile-interact" class="mobile-btn">E</button>
+      <button id="mobile-pickup" class="mobile-btn">F</button>
+      <button id="mobile-jump" class="mobile-btn">⬆</button>
+      <button id="mobile-sprint" class="mobile-btn">🏃</button>
+      <button id="mobile-crouch" class="mobile-btn">⬇</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+       NPC DIALOGUE BOX
+       ═══════════════════════════════════════════════ -->
+  <div id="npc-dialogue" class="hidden">
+    <div class="npc-avatar" id="npc-avatar">👤</div>
+    <div class="npc-content">
+      <div class="npc-name" id="npc-name">NPC</div>
+      <div class="npc-text" id="npc-text"></div>
+      <button id="npc-dismiss">Got it ✓</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════
+       THREE.JS CANVAS CONTAINER
+       ═══════════════════════════════════════════════ -->
+  <div id="canvas-container"></div>
+
+  <!-- ═══════════════════════════════════════════════
+       SCRIPTS — loaded in dependency order
+       Three.js itself is loaded dynamically by main.js from CDN.
+       ═══════════════════════════════════════════════ -->
+  <script src="roles.js"></script>
+  <script src="controls.js"></script>
+  <script src="interactions.js"></script>
+  <script src="BloomPostFX.js"></script>
+  <script src="Particles.js"></script>
+  <script src="CanvasTextures.js"></script>
+  <script src="ProceduralTextures.js"></script>
+  <script src="SSAO.js"></script>
+  <script src="main.js"></script>
+
+</body>
+</html>
