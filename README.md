@@ -1,6 +1,8 @@
 # 🚀 VR CAREER SIMULATOR: THE COMPLETE ARCHITECTURAL CODEX
 ## VERSION: 2.0 | STATUS: PRODUCTION-READY
 
+PLEASE INSTALL NODE.JS FOR USING THIS PROJECT
+
 ## 1. EXECUTIVE SUMMARY
 The VR Career Simulator is a high-fidelity, browser-based first-person exploration
 experience. It aims to bridge the gap between educational content and immersive
