@@ -1,12 +1,6 @@
 # 🚀 VR CAREER SIMULATOR: THE COMPLETE ARCHITECTURAL CODEX
 ## VERSION: 2.0 | STATUS: PRODUCTION-READY
 
-================================================================================
-This document serves as the definitive technical reference for the VR Career Simulator.
-It provides an exhaustive breakdown of every module, every line of logic, and every
-visual decision made during the development process.
-================================================================================
-
 ## 1. EXECUTIVE SUMMARY
 The VR Career Simulator is a high-fidelity, browser-based first-person exploration
 experience. It aims to bridge the gap between educational content and immersive
